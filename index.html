@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Router Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #status {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #555;
+      transition: background 0.3s;
+    }
+    #status.live { background: #34c759; }
+    #status.error { background: #ff3b30; }
+
+    #photo-wrap {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #photo {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: none;
+      border-radius: 4px;
+    }
+
+    #placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      opacity: 0.4;
+    }
+
+    #placeholder svg {
+      width: 64px;
+      height: 64px;
+      fill: #fff;
+    }
+
+    #placeholder p {
+      font-size: 15px;
+      letter-spacing: 0.03em;
+    }
+
+    #timestamp {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      color: rgba(255,255,255,0.3);
+      letter-spacing: 0.05em;
+    }
+
+    /* 새 사진 플래시 애니메이션 */
+    @keyframes flash {
+      0%   { opacity: 0; }
+      20%  { opacity: 0.6; }
+      100% { opacity: 0; }
+    }
+    #flash {
+      position: fixed;
+      inset: 0;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #flash.active {
+      animation: flash 0.4s ease-out forwards;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="status"></div>
+  <div id="flash"></div>
+
+  <div id="photo-wrap">
+    <img id="photo" alt="촬영된 사진" />
+    <div id="placeholder">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 15.2A3.2 3.2 0 1 0 12 8.8a3.2 3.2 0 0 0 0 6.4zm0-8.4a5.2 5.2 0 1 1 0 10.4A5.2 5.2 0 0 1 12 6.8zM9 2L7.17 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3.17L15 2H9z"/>
+      </svg>
+      <p>사진을 기다리는 중...</p>
+    </div>
+  </div>
+
+  <div id="timestamp"></div>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBoi4cI8hVk-c7OuQWIIOnf3Pij_xi8C_0",
+      authDomain: "router-8ca3a.firebaseapp.com",
+      projectId: "router-8ca3a",
+      storageBucket: "router-8ca3a.firebasestorage.app",
+      messagingSenderId: "551647211153",
+      appId: "1:551647211153:web:50041d65e673da1b3f9930"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const photoEl = document.getElementById('photo');
+    const placeholder = document.getElementById('placeholder');
+    const statusEl = document.getElementById('status');
+    const timestampEl = document.getElementById('timestamp');
+    const flashEl = document.getElementById('flash');
+
+    // Firestore 실시간 리스너
+    const docRef = doc(db, 'photos', 'latest');
+
+    onSnapshot(docRef,
+      (snapshot) => {
+        statusEl.className = 'live';
+
+        if (!snapshot.exists()) return;
+
+        const data = snapshot.data();
+        const url = data?.url;
+        if (!url) return;
+
+        // 새 사진 플래시 효과
+        flashEl.classList.remove('active');
+        void flashEl.offsetWidth; // reflow
+        flashEl.classList.add('active');
+
+        // 사진 표시
+        photoEl.src = url;
+        photoEl.style.display = 'block';
+        placeholder.style.display = 'none';
+
+        // 타임스탬프
+        if (data?.timestamp?.toDate) {
+          const d = data.timestamp.toDate();
+          const formatted = d.toLocaleString('ko-KR', {
+            month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+          });
+          timestampEl.textContent = formatted;
+        }
+      },
+      (error) => {
+        statusEl.className = 'error';
+        console.error('Firestore 연결 실패:', error);
+      }
+    );
+  </script>
+
+</body>
+</html>
