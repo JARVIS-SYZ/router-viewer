@@ -135,14 +135,25 @@
     const timestampEl = document.getElementById('timestamp');
     const flashEl = document.getElementById('flash');
 
-    // Firestore 실시간 리스너
-    const docRef = doc(db, 'photos', 'latest');
+    // URL 파라미터에서 코드 읽기
+    const params = new URLSearchParams(window.location.search);
+    const rawCode = params.get('code') || 'default';
+    const docId = rawCode.toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
+
+    // 페이지 타이틀에 코드 표시
+    document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
+
+    // Firestore 실시간 리스너 - 코드별 문서 구독
+    const docRef = doc(db, 'photos', docId);
 
     onSnapshot(docRef,
       (snapshot) => {
         statusEl.className = 'live';
 
-        if (!snapshot.exists()) return;
+        if (!snapshot.exists()) {
+          placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
+          return;
+        }
 
         const data = snapshot.data();
         const url = data?.url;
@@ -150,7 +161,7 @@
 
         // 새 사진 플래시 효과
         flashEl.classList.remove('active');
-        void flashEl.offsetWidth; // reflow
+        void flashEl.offsetWidth;
         flashEl.classList.add('active');
 
         // 사진 표시
@@ -165,7 +176,7 @@
             month: '2-digit', day: '2-digit',
             hour: '2-digit', minute: '2-digit', second: '2-digit'
           });
-          timestampEl.textContent = formatted;
+          timestampEl.textContent = `[${rawCode.toUpperCase()}] ${formatted}`;
         }
       },
       (error) => {
