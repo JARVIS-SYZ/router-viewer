@@ -29,7 +29,7 @@
       background: #555;
       transition: background 0.3s;
     }
-    #status.live { background: #34c759; }
+    #status.live  { background: #34c759; }
     #status.error { background: #ff3b30; }
 
     #photo-wrap {
@@ -46,6 +46,15 @@
       object-fit: contain;
       display: none;
       border-radius: 4px;
+      /* 새 사진 등장 애니메이션 */
+      animation: none;
+    }
+    #photo.appear {
+      animation: fadeIn 0.25s ease-out forwards;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.97); }
+      to   { opacity: 1; transform: scale(1); }
     }
 
     #placeholder {
@@ -54,14 +63,13 @@
       align-items: center;
       gap: 16px;
       opacity: 0.4;
+      transition: opacity 0.3s;
     }
-
     #placeholder svg {
       width: 64px;
       height: 64px;
       fill: #fff;
     }
-
     #placeholder p {
       font-size: 15px;
       letter-spacing: 0.03em;
@@ -75,12 +83,13 @@
       font-size: 12px;
       color: rgba(255,255,255,0.3);
       letter-spacing: 0.05em;
+      white-space: nowrap;
     }
 
-    /* 새 사진 플래시 애니메이션 */
+    /* 새 사진 플래시 */
     @keyframes flash {
       0%   { opacity: 0; }
-      20%  { opacity: 0.6; }
+      20%  { opacity: 0.5; }
       100% { opacity: 0; }
     }
     #flash {
@@ -91,7 +100,16 @@
       pointer-events: none;
     }
     #flash.active {
-      animation: flash 0.4s ease-out forwards;
+      animation: flash 0.35s ease-out forwards;
+    }
+
+    /* 삭제 시 페이드아웃 */
+    @keyframes fadeOut {
+      from { opacity: 1; }
+      to   { opacity: 0; }
+    }
+    #photo.disappear {
+      animation: fadeOut 0.4s ease-in forwards;
     }
   </style>
 </head>
@@ -114,7 +132,7 @@
 
   <!-- Firebase SDK -->
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { initializeApp }       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -127,52 +145,82 @@
     };
 
     const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    const db  = getFirestore(app);
 
-    const photoEl = document.getElementById('photo');
-    const placeholder = document.getElementById('placeholder');
-    const statusEl = document.getElementById('status');
-    const timestampEl = document.getElementById('timestamp');
-    const flashEl = document.getElementById('flash');
+    const photoEl      = document.getElementById('photo');
+    const placeholder  = document.getElementById('placeholder');
+    const statusEl     = document.getElementById('status');
+    const timestampEl  = document.getElementById('timestamp');
+    const flashEl      = document.getElementById('flash');
 
-    // URL 파라미터에서 코드 읽기
-    const params = new URLSearchParams(window.location.search);
+    // URL 파라미터 코드
+    const params  = new URLSearchParams(window.location.search);
     const rawCode = params.get('code') || 'default';
-    const docId = rawCode.toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
+    const docId   = rawCode.toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
 
-    // 페이지 타이틀에 코드 표시
     document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
+    placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
 
-    // Firestore 실시간 리스너 - 코드별 문서 구독
+    let currentUrl = null;
+
+    // Firestore 실시간 리스너
     const docRef = doc(db, 'photos', docId);
 
     onSnapshot(docRef,
+      { includeMetadataChanges: false },   // 서버 확정 데이터만 수신 → 즉시 반영
       (snapshot) => {
         statusEl.className = 'live';
 
+        // 문서가 없거나 삭제된 경우 → 대기 화면으로 복귀
         if (!snapshot.exists()) {
-          placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
+          if (currentUrl) {
+            // 사진이 있었는데 삭제됨 → 페이드아웃 후 대기화면
+            photoEl.classList.remove('appear');
+            photoEl.classList.add('disappear');
+            setTimeout(() => {
+              photoEl.style.display = 'none';
+              photoEl.classList.remove('disappear');
+              placeholder.style.display = 'flex';
+              timestampEl.textContent = '';
+              currentUrl = null;
+            }, 400);
+          }
           return;
         }
 
         const data = snapshot.data();
-        const url = data?.url;
-        if (!url) return;
+        const url  = data?.url;
+        if (!url || url === currentUrl) return;  // 같은 URL이면 무시
+        currentUrl = url;
 
-        // 새 사진 플래시 효과
+        // 플래시 효과
         flashEl.classList.remove('active');
         void flashEl.offsetWidth;
         flashEl.classList.add('active');
 
-        // 사진 표시
+        // 사진 등장
+        photoEl.classList.remove('appear', 'disappear');
         photoEl.src = url;
         photoEl.style.display = 'block';
         placeholder.style.display = 'none';
+
+        // 다음 프레임에 애니메이션 적용 (즉시 표시)
+        requestAnimationFrame(() => {
+          photoEl.classList.add('appear');
+        });
 
         // 타임스탬프
         if (data?.timestamp?.toDate) {
           const d = data.timestamp.toDate();
           const formatted = d.toLocaleString('ko-KR', {
+            month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+          });
+          timestampEl.textContent = `[${rawCode.toUpperCase()}] ${formatted}`;
+        } else {
+          // 서버 타임스탬프 없을 때 현재 시각 표시
+          const now = new Date();
+          const formatted = now.toLocaleString('ko-KR', {
             month: '2-digit', day: '2-digit',
             hour: '2-digit', minute: '2-digit', second: '2-digit'
           });
