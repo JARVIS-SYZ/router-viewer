@@ -186,7 +186,79 @@
     document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
     placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
 
-    let currentUrl = null;
+    let currentUrl   = null;   // 현재 표시 중인 사진 URL
+    let currentQuery = null;   // 현재 표시 중인 검색어
+
+    const fmtTime = (date) => date.toLocaleString('ko-KR', {
+      month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    const setTimestamp = (ts) => {
+      const d = ts?.toDate ? ts.toDate() : new Date();
+      timestampEl.textContent = `[${rawCode.toUpperCase()}] ${fmtTime(d)}`;
+    };
+
+    // 사진 숨기기 (animated=true면 페이드아웃)
+    const hidePhoto = (animated) => {
+      if (!currentUrl) return;
+      currentUrl = null;
+      if (animated) {
+        photoEl.classList.remove('appear');
+        photoEl.classList.add('disappear');
+        setTimeout(() => {
+          photoEl.style.display = 'none';
+          photoEl.classList.remove('disappear');
+        }, 400);
+      } else {
+        photoEl.classList.remove('appear', 'disappear');
+        photoEl.style.display = 'none';
+      }
+    };
+
+    const hideQuery = () => {
+      if (!currentQuery) return;
+      currentQuery = null;
+      queryEl.style.display = 'none';
+      queryEl.textContent = '';
+    };
+
+    // 사진만 표시 (텍스트는 숨김)
+    const showPhoto = (url, ts) => {
+      hideQuery();
+      placeholder.style.display = 'none';
+      setTimestamp(ts);
+      if (url === currentUrl) { photoEl.style.display = 'block'; return; }
+      currentUrl = url;
+      // 플래시 효과
+      flashEl.classList.remove('active');
+      void flashEl.offsetWidth;
+      flashEl.classList.add('active');
+      photoEl.classList.remove('appear', 'disappear');
+      photoEl.src = url;
+      photoEl.style.display = 'block';
+      requestAnimationFrame(() => photoEl.classList.add('appear'));
+    };
+
+    // 검색어만 표시 (사진은 숨김)
+    const showQuery = (q, ts) => {
+      hidePhoto(false);
+      placeholder.style.display = 'none';
+      setTimestamp(ts);
+      if (q === currentQuery) { queryEl.style.display = 'flex'; return; }
+      currentQuery = q;
+      queryEl.textContent = q;
+      queryEl.classList.remove('appear');
+      void queryEl.offsetWidth;
+      queryEl.classList.add('appear');
+      queryEl.style.display = 'flex';
+    };
+
+    const showPlaceholder = () => {
+      hideQuery();
+      hidePhoto(true);
+      placeholder.style.display = 'flex';
+      timestampEl.textContent = '';
+    };
 
     // Firestore 실시간 리스너
     const docRef = doc(db, 'photos', docId);
@@ -197,79 +269,25 @@
         statusEl.className = 'live';
 
         // 문서가 없거나 삭제된 경우 → 대기 화면으로 복귀
-        if (!snapshot.exists()) {
-          queryEl.style.display = 'none';
-          queryEl.textContent = '';
-          if (currentUrl) {
-            // 사진이 있었는데 삭제됨 → 페이드아웃 후 대기화면
-            photoEl.classList.remove('appear');
-            photoEl.classList.add('disappear');
-            setTimeout(() => {
-              photoEl.style.display = 'none';
-              photoEl.classList.remove('disappear');
-              placeholder.style.display = 'flex';
-              timestampEl.textContent = '';
-              currentUrl = null;
-            }, 400);
-          }
-          return;
-        }
+        if (!snapshot.exists()) { showPlaceholder(); return; }
 
-        const data = snapshot.data();
+        const data    = snapshot.data();
+        const url     = data?.url;
+        const q       = (data?.query ?? '').toString().trim();
+        const photoTs = data?.timestamp?.toMillis?.() ?? 0;
+        const queryTs = data?.queryTimestamp?.toMillis?.() ?? 0;
+        const hasPhoto = !!url;
+        const hasQuery = !!q;
 
-        // 🔮 검색어(query) 표시 - 사진 유무와 무관하게 항상 갱신
-        const q = (data?.query ?? '').toString().trim();
-        if (q) {
-          if (queryEl.textContent !== q) {
-            queryEl.textContent = q;
-            queryEl.classList.remove('appear');
-            void queryEl.offsetWidth;
-            queryEl.classList.add('appear');
-          }
-          queryEl.style.display = 'flex';
-          placeholder.style.display = 'none';
-        } else {
-          queryEl.style.display = 'none';
-          queryEl.textContent = '';
-        }
+        // 사진/텍스트 중 더 최근 데이터 하나만 표시
+        let mode = null;
+        if (hasPhoto && hasQuery) mode = (queryTs >= photoTs) ? 'query' : 'photo';
+        else if (hasPhoto)        mode = 'photo';
+        else if (hasQuery)        mode = 'query';
 
-        const url  = data?.url;
-        if (!url || url === currentUrl) return;  // 같은 URL이면 무시
-        currentUrl = url;
-
-        // 플래시 효과
-        flashEl.classList.remove('active');
-        void flashEl.offsetWidth;
-        flashEl.classList.add('active');
-
-        // 사진 등장
-        photoEl.classList.remove('appear', 'disappear');
-        photoEl.src = url;
-        photoEl.style.display = 'block';
-        placeholder.style.display = 'none';
-
-        // 다음 프레임에 애니메이션 적용 (즉시 표시)
-        requestAnimationFrame(() => {
-          photoEl.classList.add('appear');
-        });
-
-        // 타임스탬프
-        if (data?.timestamp?.toDate) {
-          const d = data.timestamp.toDate();
-          const formatted = d.toLocaleString('ko-KR', {
-            month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit'
-          });
-          timestampEl.textContent = `[${rawCode.toUpperCase()}] ${formatted}`;
-        } else {
-          // 서버 타임스탬프 없을 때 현재 시각 표시
-          const now = new Date();
-          const formatted = now.toLocaleString('ko-KR', {
-            month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit'
-          });
-          timestampEl.textContent = `[${rawCode.toUpperCase()}] ${formatted}`;
-        }
+        if (mode === 'query')      showQuery(q, data?.queryTimestamp);
+        else if (mode === 'photo') showPhoto(url, data?.timestamp);
+        else                       showPlaceholder();
       },
       (error) => {
         statusEl.className = 'error';
