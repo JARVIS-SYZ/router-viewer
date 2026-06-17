@@ -186,22 +186,28 @@
     document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
     placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
 
-    let currentUrl   = null;   // 현재 표시 중인 사진 URL
-    let currentQuery = null;   // 현재 표시 중인 검색어
+    // API 주소(텍스트 소스). 링크의 ?api= 로 전달됨 (URLSearchParams가 자동 디코딩)
+    const apiUrl = params.get('api');
+
+    // 두 소스 상태: 사진(Firebase) / 텍스트(API)
+    let photo = { url: null, ts: 0 };
+    let query = { text: null, ts: 0 };
+    let shownUrl   = null;   // 현재 화면에 표시 중인 사진
+    let shownQuery = null;   // 현재 화면에 표시 중인 텍스트
 
     const fmtTime = (date) => date.toLocaleString('ko-KR', {
       month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
-    const setTimestamp = (ts) => {
-      const d = ts?.toDate ? ts.toDate() : new Date();
+    const setTimestamp = (ms) => {
+      const d = ms ? new Date(ms) : new Date();
       timestampEl.textContent = `[${rawCode.toUpperCase()}] ${fmtTime(d)}`;
     };
 
     // 사진 숨기기 (animated=true면 페이드아웃)
     const hidePhoto = (animated) => {
-      if (!currentUrl) return;
-      currentUrl = null;
+      if (!shownUrl) return;
+      shownUrl = null;
       if (animated) {
         photoEl.classList.remove('appear');
         photoEl.classList.add('disappear');
@@ -216,19 +222,19 @@
     };
 
     const hideQuery = () => {
-      if (!currentQuery) return;
-      currentQuery = null;
+      if (!shownQuery) return;
+      shownQuery = null;
       queryEl.style.display = 'none';
       queryEl.textContent = '';
     };
 
     // 사진만 표시 (텍스트는 숨김)
-    const showPhoto = (url, ts) => {
+    const showPhoto = (url, ms) => {
       hideQuery();
       placeholder.style.display = 'none';
-      setTimestamp(ts);
-      if (url === currentUrl) { photoEl.style.display = 'block'; return; }
-      currentUrl = url;
+      setTimestamp(ms);
+      if (url === shownUrl) { photoEl.style.display = 'block'; return; }
+      shownUrl = url;
       // 플래시 효과
       flashEl.classList.remove('active');
       void flashEl.offsetWidth;
@@ -239,13 +245,13 @@
       requestAnimationFrame(() => photoEl.classList.add('appear'));
     };
 
-    // 검색어만 표시 (사진은 숨김)
-    const showQuery = (q, ts) => {
+    // 텍스트만 표시 (사진은 숨김)
+    const showQueryText = (q, ms) => {
       hidePhoto(false);
       placeholder.style.display = 'none';
-      setTimestamp(ts);
-      if (q === currentQuery) { queryEl.style.display = 'flex'; return; }
-      currentQuery = q;
+      setTimestamp(ms);
+      if (q === shownQuery) { queryEl.style.display = 'flex'; return; }
+      shownQuery = q;
       queryEl.textContent = q;
       queryEl.classList.remove('appear');
       void queryEl.offsetWidth;
@@ -260,40 +266,60 @@
       timestampEl.textContent = '';
     };
 
-    // Firestore 실시간 리스너
-    const docRef = doc(db, 'photos', docId);
+    // 사진(Firebase)과 텍스트(API) 중 시각이 더 최근인 것만 표시
+    const render = () => {
+      const hasPhoto = !!photo.url;
+      const hasQuery = !!query.text;
+      let mode = null;
+      if (hasPhoto && hasQuery) mode = (query.ts >= photo.ts) ? 'query' : 'photo';
+      else if (hasPhoto)        mode = 'photo';
+      else if (hasQuery)        mode = 'query';
 
+      if (mode === 'query')      showQueryText(query.text, query.ts);
+      else if (mode === 'photo') showPhoto(photo.url, photo.ts);
+      else                       showPlaceholder();
+    };
+
+    // ① 사진: Firestore 실시간 구독
+    const docRef = doc(db, 'photos', docId);
     onSnapshot(docRef,
-      { includeMetadataChanges: false },   // 서버 확정 데이터만 수신 → 즉시 반영
+      { includeMetadataChanges: false },
       (snapshot) => {
         statusEl.className = 'live';
-
-        // 문서가 없거나 삭제된 경우 → 대기 화면으로 복귀
-        if (!snapshot.exists()) { showPlaceholder(); return; }
-
-        const data    = snapshot.data();
-        const url     = data?.url;
-        const q       = (data?.query ?? '').toString().trim();
-        const photoTs = data?.timestamp?.toMillis?.() ?? 0;
-        const queryTs = data?.queryTimestamp?.toMillis?.() ?? 0;
-        const hasPhoto = !!url;
-        const hasQuery = !!q;
-
-        // 사진/텍스트 중 더 최근 데이터 하나만 표시
-        let mode = null;
-        if (hasPhoto && hasQuery) mode = (queryTs >= photoTs) ? 'query' : 'photo';
-        else if (hasPhoto)        mode = 'photo';
-        else if (hasQuery)        mode = 'query';
-
-        if (mode === 'query')      showQuery(q, data?.queryTimestamp);
-        else if (mode === 'photo') showPhoto(url, data?.timestamp);
-        else                       showPlaceholder();
+        const data = snapshot.exists() ? snapshot.data() : null;
+        photo = { url: data?.url || null, ts: data?.timestamp?.toMillis?.() ?? 0 };
+        render();
       },
       (error) => {
         statusEl.className = 'error';
         console.error('Firestore 연결 실패:', error);
       }
     );
+
+    // ② 텍스트: API 직접 폴링 (1초). 응답 예: { query: "맥북", ts: 1781700539149, all:[...] }
+    if (apiUrl) {
+      let busy = false;
+      const pollApi = async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          const res  = await fetch(apiUrl, { cache: 'no-store' });
+          const json = await res.json();
+          const ts   = Number(json?.ts) || 0;
+          const text = (json?.query ?? json?.all?.[0]?.query ?? '').toString().trim();
+          if (text && (text !== query.text || ts !== query.ts)) {
+            query = { text, ts };
+            render();
+          }
+        } catch (e) {
+          // 일시적 네트워크 오류 무시 (다음 주기 재시도)
+        } finally {
+          busy = false;
+        }
+      };
+      setInterval(pollApi, 1000);
+      pollApi();
+    }
   </script>
 
 </body>
