@@ -187,8 +187,12 @@
     placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
 
     // API 주소(텍스트 소스). 링크의 ?api= 로 전달됨 (URLSearchParams가 자동 디코딩).
+    // ?api= 를 여러 번 붙이면 모든 주소를 1초마다 확인한다.
     // 복사/전송 과정에서 끼어든 공백·줄바꿈을 제거해 손상된 주소도 동작하게 함.
-    const apiUrl = (params.get('api') || '').replace(/\s+/g, '') || null;
+    const apiUrls = params
+      .getAll('api')
+      .map((url) => url.replace(/\s+/g, ''))
+      .filter(Boolean);
 
     // 두 소스 상태: 사진(Firebase) / 텍스트(API)
     let photo = { url: null, ts: 0 };
@@ -298,18 +302,27 @@
     );
 
     // ② 텍스트: API 직접 폴링 (1초). 응답 예: { query: "맥북", ts: 1781700539149, all:[...] }
-    if (apiUrl) {
+    if (apiUrls.length > 0) {
       let busy = false;
       const pollApi = async () => {
         if (busy) return;
         busy = true;
         try {
-          const res  = await fetch(apiUrl, { cache: 'no-store' });
-          const json = await res.json();
-          const ts   = Number(json?.ts) || 0;
-          const text = (json?.query ?? json?.all?.[0]?.query ?? '').toString().trim();
-          if (text && (text !== query.text || ts !== query.ts)) {
-            query = { text, ts };
+          const results = await Promise.allSettled(
+            apiUrls.map(async (url) => {
+              const res  = await fetch(url, { cache: 'no-store' });
+              const json = await res.json();
+              const ts   = Number(json?.ts ?? json?.all?.[0]?.ts) || 0;
+              const text = (json?.query ?? json?.all?.[0]?.query ?? '').toString().trim();
+              return { text, ts };
+            })
+          );
+          const latest = results
+            .filter((r) => r.status === 'fulfilled' && r.value.text)
+            .map((r) => r.value)
+            .sort((a, b) => b.ts - a.ts)[0];
+          if (latest && (latest.text !== query.text || latest.ts !== query.ts)) {
+            query = latest;
             render();
           }
         } catch (e) {
