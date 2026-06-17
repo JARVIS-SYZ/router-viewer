@@ -330,7 +330,7 @@
     );
 
     // ② 텍스트: API 직접 폴링 (1초). 응답 예: { query: "맥북", ts: 1781700539149, all:[...] }
-    if (apiUrls.length > 0) {
+    if (apiSources.length > 0) {
       let busy = false;
       const pollApi = async () => {
         if (busy) return;
