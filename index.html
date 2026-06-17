@@ -31,6 +31,14 @@
     }
     #status.live  { background: #34c759; }
     #status.error { background: #ff3b30; }
+    #status.live::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 1px solid rgba(52, 199, 89, 0.45);
+      animation: statusPulse 1.6s ease-out infinite;
+    }
 
     #photo-wrap {
       width: 100vw;
@@ -61,18 +69,53 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 16px;
-      opacity: 0.4;
+      gap: 14px;
+      opacity: 0.52;
       transition: opacity 0.3s;
     }
     #placeholder svg {
       width: 64px;
       height: 64px;
-      fill: #fff;
+      fill: none;
+      stroke: #fff;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.82;
+      animation: idleFloat 2.4s ease-in-out infinite;
     }
     #placeholder p {
       font-size: 15px;
       letter-spacing: 0.03em;
+    }
+    #placeholder .idle-sub {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.58);
+      letter-spacing: 0.05em;
+    }
+    #placeholder .idle-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #34c759;
+      box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4);
+      animation: dotPulse 1.4s ease-out infinite;
+    }
+    @keyframes idleFloat {
+      0%, 100% { transform: translateY(0); opacity: 0.72; }
+      50%      { transform: translateY(-4px); opacity: 0.95; }
+    }
+    @keyframes dotPulse {
+      0%   { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.42); }
+      80%  { box-shadow: 0 0 0 10px rgba(52, 199, 89, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+    }
+    @keyframes statusPulse {
+      0%   { transform: scale(0.7); opacity: 0.9; }
+      100% { transform: scale(1.8); opacity: 0; }
     }
 
     #timestamp {
@@ -146,9 +189,14 @@
     <img id="photo" alt="촬영된 사진" />
     <div id="placeholder">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 15.2A3.2 3.2 0 1 0 12 8.8a3.2 3.2 0 0 0 0 6.4zm0-8.4a5.2 5.2 0 1 1 0 10.4A5.2 5.2 0 0 1 12 6.8zM9 2L7.17 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3.17L15 2H9z"/>
+        <path d="M12 3.5v17" />
+        <path d="M5 7.5h14" />
+        <path d="M5 12h14" />
+        <path d="M5 16.5h10" />
+        <path d="M4 3.5h16v17H4z" />
       </svg>
-      <p>사진을 기다리는 중...</p>
+      <p>정보 대기중...</p>
+      <div class="idle-sub"><span class="idle-dot"></span><span>실시간 대기</span></div>
     </div>
   </div>
 
@@ -184,7 +232,7 @@
     const docId   = rawCode.toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
 
     document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
-    placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
+    placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 정보 대기중...`;
 
     // API 소스. 새 링크는 ?source={url,valuePath,timePath}, 예전 링크는 ?api= 를 지원한다.
     // 복사/전송 과정에서 끼어든 공백·줄바꿈을 제거해 손상된 주소도 동작하게 함.
