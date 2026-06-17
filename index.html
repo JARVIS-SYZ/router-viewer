@@ -186,17 +186,29 @@
     document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
     placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
 
-    // API 주소(텍스트 소스). 링크의 ?api= 로 전달됨 (URLSearchParams가 자동 디코딩).
-    // ?api= 를 여러 번 붙이면 모든 주소를 1초마다 확인한다.
+    // API 소스. 새 링크는 ?source={url,valuePath,timePath}, 예전 링크는 ?api= 를 지원한다.
     // 복사/전송 과정에서 끼어든 공백·줄바꿈을 제거해 손상된 주소도 동작하게 함.
-    const apiUrls = params
+    const legacySources = params
       .getAll('api')
-      .map((url) => url.replace(/\s+/g, ''))
+      .map((url) => ({ url, valuePath: 'query', timePath: 'ts' }));
+    const configuredSources = params
+      .getAll('source')
+      .map((raw) => {
+        try { return JSON.parse(raw); } catch (e) { return null; }
+      })
       .filter(Boolean);
+    const apiSources = [...configuredSources, ...legacySources]
+      .map((source) => ({
+        url: (source.url || '').replace(/\s+/g, ''),
+        valuePath: (source.valuePath || 'query').trim(),
+        timePath: (source.timePath || '').trim(),
+      }))
+      .filter((source) => source.url && source.valuePath);
 
     // 두 소스 상태: 사진(Firebase) / 텍스트(API)
     let photo = { url: null, ts: 0 };
     let query = { text: null, ts: 0 };
+    const apiState = new Map(); // API별 마지막 텍스트/시각 (시간 경로 없는 API 대응)
     let shownUrl   = null;   // 현재 화면에 표시 중인 사진
     let shownQuery = null;   // 현재 화면에 표시 중인 텍스트
 
@@ -204,6 +216,22 @@
       month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
+    const getByPath = (value, path) => {
+      if (!path) return value;
+      return path.split('.').reduce((current, key) => {
+        if (current == null) return undefined;
+        const index = Number(key);
+        return current[Number.isInteger(index) && key.trim() !== '' ? index : key];
+      }, value);
+    };
+    const toMillis = (value) => {
+      if (value == null || value === '') return 0;
+      if (typeof value === 'number') return value < 10000000000 ? value * 1000 : value;
+      const numberValue = Number(value);
+      if (!Number.isNaN(numberValue)) return numberValue < 10000000000 ? numberValue * 1000 : numberValue;
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
     const setTimestamp = (ms) => {
       const d = ms ? new Date(ms) : new Date();
       timestampEl.textContent = `[${rawCode.toUpperCase()}] ${fmtTime(d)}`;
@@ -309,11 +337,15 @@
         busy = true;
         try {
           const results = await Promise.allSettled(
-            apiUrls.map(async (url) => {
-              const res  = await fetch(url, { cache: 'no-store' });
+            apiSources.map(async (source) => {
+              const res  = await fetch(source.url, { cache: 'no-store' });
               const json = await res.json();
-              const ts   = Number(json?.ts ?? json?.all?.[0]?.ts) || 0;
-              const text = (json?.query ?? json?.all?.[0]?.query ?? '').toString().trim();
+              const rawText = getByPath(json, source.valuePath);
+              const text = (rawText ?? '').toString().trim();
+              const rawTs = source.timePath ? getByPath(json, source.timePath) : undefined;
+              const prev = apiState.get(source.url + '|' + source.valuePath) || { text: null, ts: 0 };
+              const ts = toMillis(rawTs) || (text && text !== prev.text ? Date.now() : prev.ts);
+              if (text) apiState.set(source.url + '|' + source.valuePath, { text, ts });
               return { text, ts };
             })
           );
