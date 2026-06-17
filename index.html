@@ -200,7 +200,7 @@
     const apiSources = [...configuredSources, ...legacySources]
       .map((source) => ({
         url: (source.url || '').replace(/\s+/g, ''),
-        valuePath: (source.valuePath || 'query').trim(),
+        valuePath: (source.valuePath || '').trim(),
         timePath: (source.timePath || '').trim(),
       }))
       .filter((source) => source.url && source.valuePath);
