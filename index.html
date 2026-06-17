@@ -206,8 +206,9 @@
       .filter((source) => source.url && source.valuePath);
 
     // 두 소스 상태: 사진(Firebase) / 텍스트(API)
-    let photo = { url: null, ts: 0 };
-    let query = { text: null, ts: 0 };
+    const STALE_CLEAR_MS = 60 * 60 * 1000; // 1시간 동안 새 데이터가 없으면 화면 비움
+    let photo = { url: null, ts: 0, receivedAt: 0 };
+    let query = { text: null, ts: 0, receivedAt: 0 };
     const apiState = new Map(); // API별 마지막 텍스트/시각 (시간 경로 없는 API 대응)
     let shownUrl   = null;   // 현재 화면에 표시 중인 사진
     let shownQuery = null;   // 현재 화면에 표시 중인 텍스트
@@ -301,8 +302,9 @@
 
     // 사진(Firebase)과 텍스트(API) 중 시각이 더 최근인 것만 표시
     const render = () => {
-      const hasPhoto = !!photo.url;
-      const hasQuery = !!query.text;
+      const now = Date.now();
+      const hasPhoto = !!photo.url && photo.receivedAt && now - photo.receivedAt < STALE_CLEAR_MS;
+      const hasQuery = !!query.text && query.receivedAt && now - query.receivedAt < STALE_CLEAR_MS;
       let mode = null;
       if (hasPhoto && hasQuery) mode = (query.ts >= photo.ts) ? 'query' : 'photo';
       else if (hasPhoto)        mode = 'photo';
@@ -320,7 +322,15 @@
       (snapshot) => {
         statusEl.className = 'live';
         const data = snapshot.exists() ? snapshot.data() : null;
-        photo = { url: data?.url || null, ts: data?.timestamp?.toMillis?.() ?? 0 };
+        const nextPhoto = {
+          url: data?.url || null,
+          ts: data?.timestamp?.toMillis?.() ?? 0,
+        };
+        const changed = nextPhoto.url !== photo.url || nextPhoto.ts !== photo.ts;
+        photo = {
+          ...nextPhoto,
+          receivedAt: nextPhoto.url ? (changed || !photo.receivedAt ? Date.now() : photo.receivedAt) : 0,
+        };
         render();
       },
       (error) => {
@@ -354,7 +364,7 @@
             .map((r) => r.value)
             .sort((a, b) => b.ts - a.ts)[0];
           if (latest && (latest.text !== query.text || latest.ts !== query.ts)) {
-            query = latest;
+            query = { ...latest, receivedAt: Date.now() };
             render();
           }
         } catch (e) {
@@ -366,6 +376,7 @@
       setInterval(pollApi, 1000);
       pollApi();
     }
+    setInterval(render, 1000);
   </script>
 
 </body>
