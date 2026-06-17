@@ -306,6 +306,7 @@
     let photo = { url: null, ts: 0, receivedAt: 0 };
     let query = { text: null, ts: 0, receivedAt: 0 };
     const apiState = new Map(); // API별 마지막 텍스트/시각 (시간 경로 없는 API 대응)
+    const persistedApiStateKey = `router-viewer-api-state:${docId}`;
     let shownUrl   = null;   // 현재 화면에 표시 중인 사진
     let shownQuery = null;   // 현재 화면에 표시 중인 텍스트
 
@@ -328,6 +329,37 @@
       if (!Number.isNaN(numberValue)) return numberValue < 10000000000 ? numberValue * 1000 : numberValue;
       const parsed = Date.parse(value);
       return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    const timestampCandidatesFor = (source) => {
+      const paths = [];
+      if (source.timePath) paths.push(source.timePath);
+      paths.push('ts', 'timestamp', 'updatedAt', 'createdAt', 'time', 'date', 'data.ts', 'data.timestamp', 'data.updatedAt');
+      if (source.valuePath.includes('.')) {
+        const parts = source.valuePath.split('.');
+        parts.pop();
+        const parent = parts.join('.');
+        ['ts', 'timestamp', 'updatedAt', 'createdAt', 'time', 'date'].forEach((key) => paths.push(`${parent}.${key}`));
+      }
+      return [...new Set(paths.filter(Boolean))];
+    };
+    const inferTimestamp = (json, source) => {
+      for (const path of timestampCandidatesFor(source)) {
+        const ms = toMillis(getByPath(json, path));
+        if (ms) return ms;
+      }
+      return 0;
+    };
+    const isFresh = (item) => {
+      if (!item?.ts) return !!item?.receivedAt && Date.now() - item.receivedAt < STALE_CLEAR_MS;
+      return Date.now() - item.ts < STALE_CLEAR_MS;
+    };
+    const readPersistedApiState = () => {
+      try { return JSON.parse(localStorage.getItem(persistedApiStateKey) || '{}'); }
+      catch (e) { return {}; }
+    };
+    const writePersistedApiState = (state) => {
+      try { localStorage.setItem(persistedApiStateKey, JSON.stringify(state)); }
+      catch (e) {}
     };
     const setTimestamp = (ms) => {
       const d = ms ? new Date(ms) : new Date();
@@ -398,9 +430,8 @@
 
     // 사진(Firebase)과 텍스트(API) 중 시각이 더 최근인 것만 표시
     const render = () => {
-      const now = Date.now();
-      const hasPhoto = !!photo.url && photo.receivedAt && now - photo.receivedAt < STALE_CLEAR_MS;
-      const hasQuery = !!query.text && query.receivedAt && now - query.receivedAt < STALE_CLEAR_MS;
+      const hasPhoto = !!photo.url && isFresh(photo);
+      const hasQuery = !!query.text && isFresh(query);
       let mode = null;
       if (hasPhoto && hasQuery) mode = (query.ts >= photo.ts) ? 'query' : 'photo';
       else if (hasPhoto)        mode = 'photo';
@@ -448,10 +479,17 @@
               const json = await res.json();
               const rawText = getByPath(json, source.valuePath);
               const text = (rawText ?? '').toString().trim();
-              const rawTs = source.timePath ? getByPath(json, source.timePath) : undefined;
-              const prev = apiState.get(source.url + '|' + source.valuePath) || { text: null, ts: 0 };
-              const ts = toMillis(rawTs) || (text && text !== prev.text ? Date.now() : prev.ts);
-              if (text) apiState.set(source.url + '|' + source.valuePath, { text, ts });
+              const rawTs = inferTimestamp(json, source);
+              const stateKey = source.url + '|' + source.valuePath;
+              const persisted = readPersistedApiState();
+              const prev = apiState.get(stateKey) || persisted[stateKey] || { text: null, ts: 0 };
+              const ts = rawTs || (text && text !== prev.text ? Date.now() : prev.ts);
+              if (text) {
+                const nextState = { text, ts };
+                apiState.set(stateKey, nextState);
+                persisted[stateKey] = nextState;
+                writePersistedApiState(persisted);
+              }
               return { text, ts };
             })
           );
