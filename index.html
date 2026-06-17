@@ -40,6 +40,46 @@
       animation: statusPulse 1.6s ease-out infinite;
     }
 
+    #live-waiting {
+      position: fixed;
+      top: max(16px, env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.36);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.74);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      pointer-events: none;
+      user-select: none;
+    }
+    #live-waiting .dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      width: 24px;
+    }
+    #live-waiting .dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: #34c759;
+      opacity: 0;
+      transform: translateY(2px) scale(0.7);
+      animation: waitingDot 1.35s ease-in-out infinite;
+    }
+    #live-waiting .dots span:nth-child(2) { animation-delay: 0.18s; }
+    #live-waiting .dots span:nth-child(3) { animation-delay: 0.36s; }
+
     #photo-wrap {
       width: 100vw;
       height: 100vh;
@@ -117,6 +157,10 @@
       0%   { transform: scale(0.7); opacity: 0.9; }
       100% { transform: scale(1.8); opacity: 0; }
     }
+    @keyframes waitingDot {
+      0%, 70%, 100% { opacity: 0; transform: translateY(2px) scale(0.7); }
+      18%, 48%      { opacity: 1; transform: translateY(0) scale(1); }
+    }
 
     #timestamp {
       position: fixed;
@@ -182,6 +226,10 @@
 <body>
 
   <div id="status"></div>
+  <div id="live-waiting">
+    <span>실시간 정보 대기중</span>
+    <span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>
+  </div>
   <div id="flash"></div>
   <div id="query"></div>
 
