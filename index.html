@@ -186,8 +186,9 @@
     document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
     placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 사진을 기다리는 중...`;
 
-    // API 주소(텍스트 소스). 링크의 ?api= 로 전달됨 (URLSearchParams가 자동 디코딩)
-    const apiUrl = params.get('api');
+    // API 주소(텍스트 소스). 링크의 ?api= 로 전달됨 (URLSearchParams가 자동 디코딩).
+    // 복사/전송 과정에서 끼어든 공백·줄바꿈을 제거해 손상된 주소도 동작하게 함.
+    const apiUrl = (params.get('api') || '').replace(/\s+/g, '') || null;
 
     // 두 소스 상태: 사진(Firebase) / 텍스트(API)
     let photo = { url: null, ts: 0 };
