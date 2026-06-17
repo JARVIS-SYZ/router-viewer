@@ -433,7 +433,7 @@
       const hasPhoto = !!photo.url && isFresh(photo);
       const hasQuery = !!query.text && isFresh(query);
       let mode = null;
-      if (hasPhoto && hasQuery) mode = (query.ts >= photo.ts) ? 'query' : 'photo';
+      if (hasPhoto && hasQuery) mode = (photo.ts >= query.ts - 3000) ? 'photo' : 'query';
       else if (hasPhoto)        mode = 'photo';
       else if (hasQuery)        mode = 'query';
 
