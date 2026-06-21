@@ -276,13 +276,13 @@
 
     // URL 파라미터 코드
     const params  = new URLSearchParams(window.location.search);
-    const rawCode = params.get('code') || 'default';
+    const rawCode = params.get('c') || params.get('code') || 'default';
     const docId   = rawCode.toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
 
     document.title = `Router Viewer · ${rawCode.toUpperCase()}`;
     placeholder.querySelector('p').textContent = `[${rawCode.toUpperCase()}] 정보 대기중...`;
 
-    // API 소스. 새 링크는 ?source={url,valuePath,timePath}, 예전 링크는 ?api= 를 지원한다.
+    // API 소스. 짧은 링크는 Firestore 문서의 apiSources를 사용하고, 예전 링크의 ?source / ?api도 지원한다.
     // 복사/전송 과정에서 끼어든 공백·줄바꿈을 제거해 손상된 주소도 동작하게 함.
     const legacySources = params
       .getAll('api')
@@ -293,13 +293,26 @@
         try { return JSON.parse(raw); } catch (e) { return null; }
       })
       .filter(Boolean);
-    const apiSources = [...configuredSources, ...legacySources]
+    const normalizeApiSources = (sources = []) => sources
       .map((source) => ({
         url: (source.url || '').replace(/\s+/g, ''),
         valuePath: (source.valuePath || '').trim(),
         timePath: (source.timePath || '').trim(),
       }))
       .filter((source) => source.url && source.valuePath);
+    const urlApiSources = normalizeApiSources([...configuredSources, ...legacySources]);
+    let apiSources = [...urlApiSources];
+    let apiSourcesKey = JSON.stringify(apiSources);
+
+    const updateApiSourcesFromDoc = (docSources = []) => {
+      // URL에 source/api가 직접 들어온 예전 링크는 그대로 우선 지원한다.
+      if (urlApiSources.length > 0) return;
+      const nextSources = normalizeApiSources(Array.isArray(docSources) ? docSources : []);
+      const nextKey = JSON.stringify(nextSources);
+      if (nextKey === apiSourcesKey) return;
+      apiSources = nextSources;
+      apiSourcesKey = nextKey;
+    };
 
     // 두 소스 상태: 사진(Firebase) / 텍스트(API)
     const STALE_CLEAR_MS = 60 * 60 * 1000; // 1시간 동안 새 데이터가 없으면 화면 비움
@@ -449,6 +462,7 @@
       (snapshot) => {
         statusEl.className = 'live';
         const data = snapshot.exists() ? snapshot.data() : null;
+        updateApiSourcesFromDoc(data?.apiSources);
         const nextPhoto = {
           url: data?.url || null,
           ts: data?.timestamp?.toMillis?.() ?? 0,
@@ -467,49 +481,47 @@
     );
 
     // ② 텍스트: API 직접 폴링 (1초). 응답 예: { query: "맥북", ts: 1781700539149, all:[...] }
-    if (apiSources.length > 0) {
-      let busy = false;
-      const pollApi = async () => {
-        if (busy) return;
-        busy = true;
-        try {
-          const results = await Promise.allSettled(
-            apiSources.map(async (source) => {
-              const res  = await fetch(source.url, { cache: 'no-store' });
-              const json = await res.json();
-              const rawText = getByPath(json, source.valuePath);
-              const text = (rawText ?? '').toString().trim();
-              const rawTs = inferTimestamp(json, source);
-              const stateKey = source.url + '|' + source.valuePath;
-              const persisted = readPersistedApiState();
-              const prev = apiState.get(stateKey) || persisted[stateKey] || { text: null, ts: 0 };
-              const ts = rawTs || (text && text !== prev.text ? Date.now() : prev.ts);
-              if (text) {
-                const nextState = { text, ts };
-                apiState.set(stateKey, nextState);
-                persisted[stateKey] = nextState;
-                writePersistedApiState(persisted);
-              }
-              return { text, ts };
-            })
-          );
-          const latest = results
-            .filter((r) => r.status === 'fulfilled' && r.value.text)
-            .map((r) => r.value)
-            .sort((a, b) => b.ts - a.ts)[0];
-          if (latest && (latest.text !== query.text || latest.ts !== query.ts)) {
-            query = { ...latest, receivedAt: Date.now() };
-            render();
-          }
-        } catch (e) {
-          // 일시적 네트워크 오류 무시 (다음 주기 재시도)
-        } finally {
-          busy = false;
+    let busy = false;
+    const pollApi = async () => {
+      if (busy || apiSources.length === 0) return;
+      busy = true;
+      try {
+        const results = await Promise.allSettled(
+          apiSources.map(async (source) => {
+            const res  = await fetch(source.url, { cache: 'no-store' });
+            const json = await res.json();
+            const rawText = getByPath(json, source.valuePath);
+            const text = (rawText ?? '').toString().trim();
+            const rawTs = inferTimestamp(json, source);
+            const stateKey = source.url + '|' + source.valuePath;
+            const persisted = readPersistedApiState();
+            const prev = apiState.get(stateKey) || persisted[stateKey] || { text: null, ts: 0 };
+            const ts = rawTs || (text && text !== prev.text ? Date.now() : prev.ts);
+            if (text) {
+              const nextState = { text, ts };
+              apiState.set(stateKey, nextState);
+              persisted[stateKey] = nextState;
+              writePersistedApiState(persisted);
+            }
+            return { text, ts };
+          })
+        );
+        const latest = results
+          .filter((r) => r.status === 'fulfilled' && r.value.text)
+          .map((r) => r.value)
+          .sort((a, b) => b.ts - a.ts)[0];
+        if (latest && (latest.text !== query.text || latest.ts !== query.ts)) {
+          query = { ...latest, receivedAt: Date.now() };
+          render();
         }
-      };
-      setInterval(pollApi, 1000);
-      pollApi();
-    }
+      } catch (e) {
+        // 일시적 네트워크 오류 무시 (다음 주기 재시도)
+      } finally {
+        busy = false;
+      }
+    };
+    setInterval(pollApi, 1000);
+    pollApi();
     setInterval(render, 1000);
   </script>
 
