@@ -207,16 +207,27 @@
       align-items: center;
       justify-content: center;
       text-align: center;
-      padding: 24px;
+      padding: max(72px, env(safe-area-inset-top)) clamp(24px, 6vw, 96px) 54px;
       font-size: clamp(40px, 16vw, 200px);
       font-weight: 800;
       letter-spacing: 0.01em;
-      line-height: 1.1;
+      line-height: 1.16;
       color: #fff;
       text-shadow: 0 4px 28px rgba(0,0,0,0.85), 0 0 3px rgba(0,0,0,0.9);
       z-index: 5;
-      word-break: break-word;
+      white-space: pre-wrap;
+      word-break: keep-all;
+      overflow-wrap: anywhere;
+      text-wrap: balance;
+      font-variant-numeric: tabular-nums lining-nums;
       pointer-events: none;
+    }
+    #query.calculation {
+      line-height: 1.22;
+      letter-spacing: 0.015em;
+      word-break: normal;
+      overflow-wrap: normal;
+      text-wrap: pretty;
     }
     #query.appear {
       animation: fadeIn 0.25s ease-out forwards;
@@ -420,19 +431,81 @@
       requestAnimationFrame(() => photoEl.classList.add('appear'));
     };
 
+    const renderQueryContent = (value) => {
+      const text = String(value ?? '');
+      const isCalculation = /\d[\s\S]*[=+\-−×÷*/^]|[=+\-−×÷*/^][\s\S]*\d/.test(text);
+      queryEl.classList.toggle('calculation', isCalculation);
+      queryEl.replaceChildren();
+
+      if (!isCalculation) {
+        queryEl.textContent = text;
+        return;
+      }
+
+      // 수식은 연산자 뒤를 우선 줄바꿈 지점으로 사용하고 원문 문자는 그대로 유지한다.
+      text.split(/([=+\-−×÷*/^,;])/g).forEach((part) => {
+        if (!part) return;
+        queryEl.append(document.createTextNode(part));
+        if (/^[=+\-−×÷*/^,;]$/.test(part)) queryEl.append(document.createElement('wbr'));
+      });
+    };
+
+    const fitQueryText = () => {
+      if (!shownQuery || queryEl.style.display === 'none') return;
+      const horizontalPadding = Math.min(192, Math.max(48, window.innerWidth * 0.12));
+      const availableWidth = Math.max(1, window.innerWidth - horizontalPadding);
+      let maxSize = Math.min(200, window.innerWidth * 0.16, window.innerHeight * 0.23);
+
+      if (queryEl.classList.contains('calculation')) {
+        const longestTerm = Math.max(
+          1,
+          ...String(shownQuery).split(/[=+\-−×÷*/^,;\s]+/).map((term) => Array.from(term).length),
+        );
+        maxSize = Math.min(maxSize, availableWidth / (longestTerm * 0.62));
+      } else {
+        const characters = Array.from(String(shownQuery).replace(/\s+/g, ' ').trim());
+        const cjkCount = characters.filter((char) => /[가-힣ㄱ-ㅎㅏ-ㅣ一-龯ぁ-んァ-ン]/.test(char)).length;
+        const averageWidth = characters.length > 0
+          ? 0.58 + (cjkCount / characters.length) * 0.42
+          : 0.58;
+        const targetLines = Math.max(1, Math.min(10, Math.ceil(Math.sqrt(characters.length) * 0.75)));
+        const targetCharactersPerLine = Math.max(1, Math.ceil(characters.length / targetLines));
+        maxSize = Math.min(maxSize, availableWidth / (targetCharactersPerLine * averageWidth));
+      }
+
+      let low = Math.min(14, maxSize);
+      let high = Math.max(low, maxSize);
+
+      for (let i = 0; i < 10; i += 1) {
+        const size = (low + high) / 2;
+        queryEl.style.fontSize = `${size}px`;
+        const fits = queryEl.scrollHeight <= queryEl.clientHeight && queryEl.scrollWidth <= queryEl.clientWidth;
+        if (fits) low = size;
+        else high = size;
+      }
+      queryEl.style.fontSize = `${Math.floor(low)}px`;
+    };
+
     // 텍스트만 표시 (사진은 숨김)
     const showQueryText = (q, ms) => {
       hidePhoto(false);
       placeholder.style.display = 'none';
       setTimestamp(ms);
-      if (q === shownQuery) { queryEl.style.display = 'flex'; return; }
+      if (q === shownQuery) {
+        queryEl.style.display = 'flex';
+        fitQueryText();
+        return;
+      }
       shownQuery = q;
-      queryEl.textContent = q;
+      renderQueryContent(q);
       queryEl.classList.remove('appear');
       void queryEl.offsetWidth;
       queryEl.classList.add('appear');
       queryEl.style.display = 'flex';
+      fitQueryText();
     };
+
+    window.addEventListener('resize', fitQueryText);
 
     const showPlaceholder = () => {
       hideQuery();
