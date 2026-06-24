@@ -223,11 +223,31 @@
       pointer-events: none;
     }
     #query.calculation {
-      line-height: 1.22;
-      letter-spacing: 0.015em;
+      flex-direction: column;
+      gap: clamp(16px, 4vh, 48px);
+      line-height: 1.08;
       word-break: normal;
       overflow-wrap: normal;
-      text-wrap: pretty;
+      text-wrap: nowrap;
+      white-space: normal;
+    }
+    #query .calculation-line {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      white-space: nowrap;
+      word-break: normal;
+      overflow-wrap: normal;
+      text-align: center;
+      line-height: 1.08;
+    }
+    #query .calculation-expression {
+      color: rgba(255, 255, 255, 0.78);
+      font-weight: 650;
+    }
+    #query .calculation-result {
+      color: #fff;
+      font-weight: 800;
     }
     #query.appear {
       animation: fadeIn 0.25s ease-out forwards;
@@ -431,23 +451,58 @@
       requestAnimationFrame(() => photoEl.classList.add('appear'));
     };
 
+    const parseCalculation = (value) => {
+      const text = String(value ?? '');
+      const equalsIndex = Math.max(text.lastIndexOf('='), text.lastIndexOf('＝'));
+      if (equalsIndex > 0 && equalsIndex < text.length - 1) {
+        const expression = text.slice(0, equalsIndex).trim();
+        const result = text.slice(equalsIndex + 1).trim();
+        if (expression && result && /\d[\s\S]*[+\-−×÷*/^]|[+\-−×÷*/^][\s\S]*\d/.test(expression)) {
+          return { expression: `${expression}=`, result };
+        }
+      }
+
+      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (lines.length >= 2) {
+        const expression = lines.slice(0, -1).join(' ');
+        const result = lines.at(-1);
+        if (/\d[\s\S]*[+\-−×÷*/^]|[+\-−×÷*/^][\s\S]*\d/.test(expression) && result) {
+          return { expression, result };
+        }
+      }
+      return null;
+    };
+
     const renderQueryContent = (value) => {
       const text = String(value ?? '');
-      const isCalculation = /\d[\s\S]*[=+\-−×÷*/^]|[=+\-−×÷*/^][\s\S]*\d/.test(text);
-      queryEl.classList.toggle('calculation', isCalculation);
+      const calculation = parseCalculation(text);
+      queryEl.classList.toggle('calculation', !!calculation);
       queryEl.replaceChildren();
 
-      if (!isCalculation) {
+      if (!calculation) {
         queryEl.textContent = text;
         return;
       }
 
-      // 수식은 연산자 뒤를 우선 줄바꿈 지점으로 사용하고 원문 문자는 그대로 유지한다.
-      text.split(/([=+\-−×÷*/^,;])/g).forEach((part) => {
-        if (!part) return;
-        queryEl.append(document.createTextNode(part));
-        if (/^[=+\-−×÷*/^,;]$/.test(part)) queryEl.append(document.createElement('wbr'));
-      });
+      const expressionEl = document.createElement('div');
+      expressionEl.className = 'calculation-line calculation-expression';
+      expressionEl.textContent = calculation.expression;
+      const resultEl = document.createElement('div');
+      resultEl.className = 'calculation-line calculation-result';
+      resultEl.textContent = calculation.result;
+      queryEl.append(expressionEl, resultEl);
+    };
+
+    const fitSingleLine = (element, maxSize) => {
+      let low = 1;
+      let high = Math.max(1, maxSize);
+      for (let i = 0; i < 12; i += 1) {
+        const size = (low + high) / 2;
+        element.style.fontSize = `${size}px`;
+        if (element.scrollWidth <= element.clientWidth) low = size;
+        else high = size;
+      }
+      element.style.fontSize = `${Math.max(1, Math.floor(low))}px`;
     };
 
     const fitQueryText = () => {
@@ -457,11 +512,25 @@
       let maxSize = Math.min(200, window.innerWidth * 0.16, window.innerHeight * 0.23);
 
       if (queryEl.classList.contains('calculation')) {
-        const longestTerm = Math.max(
-          1,
-          ...String(shownQuery).split(/[=+\-−×÷*/^,;\s]+/).map((term) => Array.from(term).length),
-        );
-        maxSize = Math.min(maxSize, availableWidth / (longestTerm * 0.62));
+        const expressionEl = queryEl.querySelector('.calculation-expression');
+        const resultEl = queryEl.querySelector('.calculation-result');
+        if (!expressionEl || !resultEl) return;
+
+        queryEl.style.fontSize = '';
+        fitSingleLine(expressionEl, Math.min(112, window.innerWidth * 0.11, window.innerHeight * 0.15));
+        fitSingleLine(resultEl, Math.min(200, window.innerWidth * 0.18, window.innerHeight * 0.27));
+
+        const queryStyle = getComputedStyle(queryEl);
+        const availableHeight = queryEl.clientHeight
+          - parseFloat(queryStyle.paddingTop)
+          - parseFloat(queryStyle.paddingBottom);
+        const contentHeight = expressionEl.offsetHeight + resultEl.offsetHeight + parseFloat(queryStyle.rowGap || queryStyle.gap || 0);
+        if (contentHeight > availableHeight && availableHeight > 0) {
+          const scale = availableHeight / contentHeight;
+          expressionEl.style.fontSize = `${Math.max(1, Math.floor(parseFloat(expressionEl.style.fontSize) * scale))}px`;
+          resultEl.style.fontSize = `${Math.max(1, Math.floor(parseFloat(resultEl.style.fontSize) * scale))}px`;
+        }
+        return;
       } else {
         const characters = Array.from(String(shownQuery).replace(/\s+/g, ' ').trim());
         const cjkCount = characters.filter((char) => /[가-힣ㄱ-ㅎㅏ-ㅣ一-龯ぁ-んァ-ン]/.test(char)).length;
