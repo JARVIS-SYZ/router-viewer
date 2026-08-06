@@ -371,6 +371,9 @@
     let photoLoadGeneration = 0;
     let photoRetryCount = 0;
     let photoRetryTimer = null;
+    let originalLoadGeneration = 0;
+    let loadingOriginalUrl = null;
+    let shownOriginalUrl = null;
 
     const fmtTime = (date) => date.toLocaleString('ko-KR', {
       month: '2-digit', day: '2-digit',
@@ -431,7 +434,10 @@
     // 사진 숨기기 (animated=true면 페이드아웃)
     const hidePhoto = (animated) => {
       photoLoadGeneration += 1;
+      originalLoadGeneration += 1;
       loadingUrl = null;
+      loadingOriginalUrl = null;
+      shownOriginalUrl = null;
       photoRetryCount = 0;
       if (photoRetryTimer) {
         clearTimeout(photoRetryTimer);
@@ -459,8 +465,35 @@
       queryEl.textContent = '';
     };
 
+    const upgradeToOriginal = (previewUrl, originalUrl) => {
+      if (!originalUrl || shownOriginalUrl === originalUrl || loadingOriginalUrl === originalUrl) return;
+
+      const generation = ++originalLoadGeneration;
+      loadingOriginalUrl = originalUrl;
+      const loader = new Image();
+      loader.onload = async () => {
+        try { await loader.decode?.(); } catch (e) {}
+        if (
+          generation !== originalLoadGeneration
+          || photo.url !== previewUrl
+          || photo.originalUrl !== originalUrl
+          || shownUrl !== previewUrl
+        ) return;
+
+        // 미리보기는 계속 보이는 상태에서 디코딩까지 끝난 원본으로 조용히 교체한다.
+        photoEl.src = originalUrl;
+        shownOriginalUrl = originalUrl;
+        loadingOriginalUrl = null;
+      };
+      loader.onerror = () => {
+        if (generation === originalLoadGeneration) loadingOriginalUrl = null;
+      };
+      loader.src = originalUrl;
+    };
+
     const commitLoadedPhoto = (url, loadedUrl, ms) => {
       shownUrl = url;
+      shownOriginalUrl = null;
       loadingUrl = null;
       photoRetryCount = 0;
       photoRetryTimer = null;
@@ -476,13 +509,18 @@
       photoEl.src = loadedUrl;
       photoEl.style.display = 'block';
       requestAnimationFrame(() => photoEl.classList.add('appear'));
+      upgradeToOriginal(url, photo.originalUrl);
     };
 
     // 사진만 표시 (텍스트는 숨김). 다운로드 완료 후에만 표시 상태를 확정한다.
     const showPhoto = (url, ms) => {
       hideQuery();
       placeholder.style.display = 'none';
-      if (url === shownUrl) { photoEl.style.display = 'block'; return; }
+      if (url === shownUrl) {
+        photoEl.style.display = 'block';
+        upgradeToOriginal(url, photo.originalUrl);
+        return;
+      }
       if (url === loadingUrl) return;
 
       // 재시도 대기 중 더 최신 URL이 들어오면 이전 타이머를 즉시 폐기한다.
@@ -676,6 +714,7 @@
         updateApiSourcesFromDoc(data?.apiSources);
         const nextPhoto = {
           url: data?.url || null,
+          originalUrl: data?.originalUrl || null,
           ts: data?.timestamp?.toMillis?.() ?? 0,
         };
         const changed = nextPhoto.url !== photo.url || nextPhoto.ts !== photo.ts;
