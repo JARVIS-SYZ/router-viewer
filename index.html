@@ -367,6 +367,10 @@
     const persistedApiStateKey = `router-viewer-api-state:${docId}`;
     let shownUrl   = null;   // 현재 화면에 표시 중인 사진
     let shownQuery = null;   // 현재 화면에 표시 중인 텍스트
+    let loadingUrl = null;   // 현재 다운로드 중인 사진
+    let photoLoadGeneration = 0;
+    let photoRetryCount = 0;
+    let photoRetryTimer = null;
 
     const fmtTime = (date) => date.toLocaleString('ko-KR', {
       month: '2-digit', day: '2-digit',
@@ -426,6 +430,13 @@
 
     // 사진 숨기기 (animated=true면 페이드아웃)
     const hidePhoto = (animated) => {
+      photoLoadGeneration += 1;
+      loadingUrl = null;
+      photoRetryCount = 0;
+      if (photoRetryTimer) {
+        clearTimeout(photoRetryTimer);
+        photoRetryTimer = null;
+      }
       if (!shownUrl) return;
       shownUrl = null;
       if (animated) {
@@ -448,21 +459,65 @@
       queryEl.textContent = '';
     };
 
-    // 사진만 표시 (텍스트는 숨김)
-    const showPhoto = (url, ms) => {
+    const commitLoadedPhoto = (url, loadedUrl, ms) => {
+      shownUrl = url;
+      loadingUrl = null;
+      photoRetryCount = 0;
+      photoRetryTimer = null;
       hideQuery();
       placeholder.style.display = 'none';
       setTimestamp(ms);
-      if (url === shownUrl) { photoEl.style.display = 'block'; return; }
-      shownUrl = url;
+
       // 플래시 효과
       flashEl.classList.remove('active');
       void flashEl.offsetWidth;
       flashEl.classList.add('active');
       photoEl.classList.remove('appear', 'disappear');
-      photoEl.src = url;
+      photoEl.src = loadedUrl;
       photoEl.style.display = 'block';
       requestAnimationFrame(() => photoEl.classList.add('appear'));
+    };
+
+    // 사진만 표시 (텍스트는 숨김). 다운로드 완료 후에만 표시 상태를 확정한다.
+    const showPhoto = (url, ms) => {
+      hideQuery();
+      placeholder.style.display = 'none';
+      if (url === shownUrl) { photoEl.style.display = 'block'; return; }
+      if (url === loadingUrl) return;
+
+      // 재시도 대기 중 더 최신 URL이 들어오면 이전 타이머를 즉시 폐기한다.
+      if (photoRetryTimer) {
+        clearTimeout(photoRetryTimer);
+        photoRetryTimer = null;
+        photoRetryCount = 0;
+      }
+
+      const generation = ++photoLoadGeneration;
+      loadingUrl = url;
+      const loader = new Image();
+      const retryUrl = photoRetryCount > 0 && !url.startsWith('data:')
+        ? `${url}${url.includes('?') ? '&' : '?'}router_retry=${photoRetryCount}`
+        : url;
+
+      loader.onload = async () => {
+        try { await loader.decode?.(); } catch (e) {}
+        // 로딩 중 더 최신 사진이나 텍스트가 선택됐다면 오래된 결과는 버린다.
+        if (generation !== photoLoadGeneration || photo.url !== url) return;
+        commitLoadedPhoto(url, retryUrl, ms);
+      };
+      loader.onerror = () => {
+        if (generation !== photoLoadGeneration || photo.url !== url) return;
+        photoRetryCount += 1;
+        const retryDelay = Math.min(5000, 400 * (2 ** Math.min(photoRetryCount - 1, 4)));
+        photoRetryTimer = setTimeout(() => {
+          photoRetryTimer = null;
+          if (photo.url === url && shownUrl !== url) {
+            loadingUrl = null;
+            showPhoto(url, ms);
+          }
+        }, retryDelay);
+      };
+      loader.src = retryUrl;
     };
 
     const parseCalculation = (value) => {
