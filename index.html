@@ -299,6 +299,7 @@
   <script type="module">
     import { initializeApp }       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getStorage, ref as storageRef, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBoi4cI8hVk-c7OuQWIIOnf3Pij_xi8C_0",
@@ -311,6 +312,7 @@
 
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
+    const storage = getStorage(app);
 
     const photoEl      = document.getElementById('photo');
     const placeholder  = document.getElementById('placeholder');
@@ -374,6 +376,8 @@
     let originalLoadGeneration = 0;
     let loadingOriginalUrl = null;
     let shownOriginalUrl = null;
+    let originalLookupInFlight = 0;
+    let originalLookupTimer = null;
 
     const fmtTime = (date) => date.toLocaleString('ko-KR', {
       month: '2-digit', day: '2-digit',
@@ -489,6 +493,29 @@
         if (generation === originalLoadGeneration) loadingOriginalUrl = null;
       };
       loader.src = originalUrl;
+    };
+
+    // 앱의 Firestore originalUrl 갱신이 누락돼도 촬영 시각으로 Storage 원본을 직접 찾는다.
+    const resolveOriginalFromStorage = async (capturedAt) => {
+      if (!capturedAt || photo.originalUrl || originalLookupInFlight === capturedAt) return;
+      originalLookupInFlight = capturedAt;
+      try {
+        const path = `photos/${docId}/photo_${capturedAt}_original.jpg`;
+        const originalUrl = await getDownloadURL(storageRef(storage, path));
+        if (photo.capturedAt !== capturedAt) return;
+        photo = { ...photo, originalUrl };
+        render();
+      } catch (e) {
+        // 원본 업로드가 아직 진행 중이면 현재 사진인 동안만 다시 확인한다.
+        if (photo.capturedAt === capturedAt && !photo.originalUrl) {
+          originalLookupTimer = setTimeout(() => {
+            originalLookupTimer = null;
+            resolveOriginalFromStorage(capturedAt);
+          }, 1500);
+        }
+      } finally {
+        if (originalLookupInFlight === capturedAt) originalLookupInFlight = 0;
+      }
     };
 
     const commitLoadedPhoto = (url, loadedUrl, ms) => {
@@ -715,14 +742,20 @@
         const nextPhoto = {
           url: data?.url || null,
           originalUrl: data?.originalUrl || null,
+          capturedAt: Number(data?.capturedAt || 0),
           ts: data?.timestamp?.toMillis?.() ?? 0,
         };
+        if (photo.capturedAt !== nextPhoto.capturedAt && originalLookupTimer) {
+          clearTimeout(originalLookupTimer);
+          originalLookupTimer = null;
+        }
         const changed = nextPhoto.url !== photo.url || nextPhoto.ts !== photo.ts;
         photo = {
           ...nextPhoto,
           receivedAt: nextPhoto.url ? (changed || !photo.receivedAt ? Date.now() : photo.receivedAt) : 0,
         };
         render();
+        if (photo.url && !photo.originalUrl) resolveOriginalFromStorage(photo.capturedAt);
       },
       (error) => {
         statusEl.className = 'error';
