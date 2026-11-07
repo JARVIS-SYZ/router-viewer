@@ -361,10 +361,11 @@
       apiSourcesKey = nextKey;
     };
 
-    // 두 소스 상태: 사진(Firebase) / 텍스트(API)
+    // 세 소스 상태: 사진(Firebase) / 텍스트(API) / 인식된 카드(Firebase)
     const STALE_CLEAR_MS = 60 * 60 * 1000; // 1시간 동안 새 데이터가 없으면 화면 비움
     let photo = { url: null, ts: 0, receivedAt: 0 };
     let query = { text: null, ts: 0, receivedAt: 0 };
+    let card = { text: null, ts: 0, receivedAt: 0 };
     const apiState = new Map(); // API별 마지막 텍스트/시각 (시간 경로 없는 API 대응)
     const persistedApiStateKey = `router-viewer-api-state:${docId}`;
     let shownUrl   = null;   // 현재 화면에 표시 중인 사진
@@ -717,16 +718,21 @@
       timestampEl.textContent = '';
     };
 
-    // 사진(Firebase)과 텍스트(API) 중 시각이 더 최근인 것만 표시
+    // 사진(Firebase)과 텍스트(API·카드 인식) 중 시각이 더 최근인 것만 표시
     const render = () => {
       const hasPhoto = !!photo.url && isFresh(photo);
-      const hasQuery = !!query.text && isFresh(query);
+      const hasApiText = !!query.text && isFresh(query);
+      const hasCard = !!card.text && isFresh(card);
+      const text = hasApiText && hasCard
+        ? (card.ts >= query.ts ? card : query)
+        : hasCard ? card : hasApiText ? query : null;
+      const hasQuery = !!text;
       let mode = null;
-      if (hasPhoto && hasQuery) mode = (photo.ts >= query.ts - 3000) ? 'photo' : 'query';
+      if (hasPhoto && hasQuery) mode = (photo.ts >= text.ts - 3000) ? 'photo' : 'query';
       else if (hasPhoto)        mode = 'photo';
       else if (hasQuery)        mode = 'query';
 
-      if (mode === 'query')      showQueryText(query.text, query.ts);
+      if (mode === 'query')      showQueryText(text.text, text.ts);
       else if (mode === 'photo') showPhoto(photo.url, photo.ts);
       else                       showPlaceholder();
     };
@@ -748,6 +754,14 @@
         if (photo.capturedAt !== nextPhoto.capturedAt && originalLookupTimer) {
           clearTimeout(originalLookupTimer);
           originalLookupTimer = null;
+        }
+        // 라우터 앱 카드 인식 결과 (cardText / cardTimestamp)
+        const nextCard = {
+          text: (data?.cardText ?? '').toString().trim() || null,
+          ts: data?.cardTimestamp?.toMillis?.() ?? 0,
+        };
+        if (nextCard.text !== card.text || nextCard.ts !== card.ts) {
+          card = { ...nextCard, receivedAt: nextCard.text ? Date.now() : 0 };
         }
         const changed = nextPhoto.url !== photo.url || nextPhoto.ts !== photo.ts;
         photo = {
