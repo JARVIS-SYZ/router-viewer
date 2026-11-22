@@ -298,7 +298,7 @@
   <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp }       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getFirestore, doc, onSnapshot, disableNetwork, enableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     import { getStorage, ref as storageRef, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
     const firebaseConfig = {
@@ -785,7 +785,15 @@
       try {
         const results = await Promise.allSettled(
           apiSources.map(async (source) => {
-            const res  = await fetch(source.url, { cache: 'no-store' });
+            // 응답이 멈춘 요청 하나가 이후 폴링을 모두 막지 않게 4초에서 끊는다
+            const controller = new AbortController();
+            const abortTimer = setTimeout(() => controller.abort(), 4000);
+            let res;
+            try {
+              res = await fetch(source.url, { cache: 'no-store', signal: controller.signal });
+            } finally {
+              clearTimeout(abortTimer);
+            }
             const json = await res.json();
             const rawText = getByPath(json, source.valuePath);
             const text = (rawText ?? '').toString().trim();
@@ -820,6 +828,33 @@
     setInterval(pollApi, 1000);
     pollApi();
     setInterval(render, 1000);
+
+    // ③ 휴대폰에서 탭이 백그라운드에 있다가 돌아오면 브라우저가 끊어 둔 실시간 연결이
+    //    느리게(재시도 대기) 복구될 수 있어, 돌아오는 즉시 다시 연결하고 텍스트도 바로 확인한다.
+    let reconnecting = false;
+    const reconnectNow = async () => {
+      pollApi();
+      if (reconnecting) return;
+      reconnecting = true;
+      try {
+        await disableNetwork(db);
+        await enableNetwork(db);
+      } catch (e) {
+        console.warn('Firestore 재연결 실패:', e);
+      } finally {
+        reconnecting = false;
+      }
+    };
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+      } else if (hiddenAt && Date.now() - hiddenAt > 3000) {
+        reconnectNow();
+      }
+    });
+    window.addEventListener('online', reconnectNow);
+    window.addEventListener('pageshow', (event) => { if (event.persisted) reconnectNow(); });
   </script>
 
 </body>
